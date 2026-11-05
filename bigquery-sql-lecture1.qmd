@@ -1,0 +1,186 @@
+---
+title: "BigQuery SQL Basics"
+subtitle: "IC/CP-W04 Lecture 1: GA4 Sample Ecommerce Data"
+author: "Rosarie Maramag"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: false
+    code-copy: true
+    embed-resources: true
+    theme: cosmo
+---
+
+# Introduction
+
+In this notebook I practice the basic SQL commands from Lecture 1 in BigQuery. All of the queries use the public GA4 sample ecommerce data set, `bigquery-public-data.ga4_obfuscated_sample_ecommerce`. GA4 exports one table per day (like `events_20201201`), so I use the wildcard `events_*` to read many days at once. The SQL blocks below are only for display (they do not run in Quarto). I ran each one in BigQuery and pasted a screenshot of the output under it.
+
+The BigQuery export schema has more variables than what shows up in this sample data set, so I only use the columns that are available.
+
+# SELECT, FROM, and LIMIT
+
+## Pick columns and return rows
+
+This is the most basic query. `SELECT` picks which columns I want, `FROM` says which table to read, and `LIMIT` keeps the result small by only returning 20 rows. Here I pull the date and the name of each event.
+
+``` sql
+SELECT event_date, event_name
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+LIMIT 20;
+```
+
+![](images/clipboard-2743832615.png)
+
+# WHERE: Filtering Rows
+
+## Keep only purchases
+
+`WHERE` keeps only the rows that match a condition. This query returns only the `purchase` events, along with the date and the anonymous user ID (`user_pseudo_id`), and stops at 50 rows.
+
+``` sql
+SELECT event_date, event_name, user_pseudo_id
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+WHERE event_name = 'purchase'
+LIMIT 50;
+```
+
+![](images/clipboard-142390437.png)
+
+![](images/clipboard-539791069.png)
+
+![](images/clipboard-1797273977.png)
+
+# ORDER BY: Sorting Results
+
+## Most recent purchases first
+
+`ORDER BY` sorts the rows. `DESC` means descending, so the newest purchases (largest timestamp) show up first. Without `DESC` it sorts from smallest to largest.
+
+``` sql
+SELECT event_date, event_timestamp, event_name
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+WHERE event_name = 'purchase'
+ORDER BY event_timestamp DESC
+LIMIT 20;
+```
+
+![](images/clipboard-1121750580.png)
+
+## Making timestamps readable
+
+GA4 timestamps are stored in microseconds, which is a long number that is hard to read. `TIMESTAMP_MICROS()` converts it into a real date and time, and `AS event_time` gives the new column a name.
+
+``` sql
+SELECT TIMESTAMP_MICROS(event_timestamp) AS event_time,
+       event_name
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+ORDER BY event_timestamp DESC
+LIMIT 10;
+```
+
+![](images/clipboard-94823500.png)
+
+# Aggregate Functions
+
+`COUNT`, `SUM`, `AVG`, `MIN`, and `MAX` summarize many rows into a few values. In these examples I use `COUNT(*)`, which counts rows, and I limit the date range with `_TABLE_SUFFIX` so the query scans less data.
+
+## Count total events in a date range
+
+This counts every event in December 2020 and returns a single number.
+
+``` sql
+SELECT COUNT(*) AS event_count
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+WHERE _TABLE_SUFFIX BETWEEN '20201201' AND '20201231';
+```
+
+![](images/clipboard-2738515794.png)
+
+## Count purchases in a date range
+
+This adds a second condition with `AND` so it only counts `purchase` events in December 2020. The result is one number showing how many purchases happened.
+
+``` sql
+SELECT COUNT(*) AS purchase_events
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+WHERE event_name = 'purchase'
+  AND _TABLE_SUFFIX BETWEEN '20201201' AND '20201231';
+```
+
+![](images/clipboard-876189602.png)
+
+# GROUP BY: Controlling the Grain
+
+`GROUP BY` decides what one row in the result stands for (for example one row per day or one row per event type). Every column in `SELECT` that is not inside a function like `COUNT` has to be in the `GROUP BY`.
+
+## Events by day
+
+Here one row is one day. The query counts how many events happened on each day in December 2020 and sorts by date so I can see the trend over the month.
+
+``` sql
+SELECT event_date, COUNT(*) AS events
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+WHERE _TABLE_SUFFIX BETWEEN '20201201' AND '20201231'
+GROUP BY event_date
+ORDER BY event_date;
+```
+
+![](images/clipboard-2392300213.png)
+
+![](images/clipboard-2844979388.png)
+
+## Top event types
+
+Here one row is one type of event. The query counts how many times each event happened, sorts from most to least, and keeps the top 15. This shows which actions users do the most.
+
+``` sql
+SELECT event_name, COUNT(*) AS events
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+WHERE _TABLE_SUFFIX BETWEEN '20201201' AND '20201231'
+GROUP BY event_name
+ORDER BY events DESC
+LIMIT 15;
+```
+
+![](images/clipboard-70435556.png)
+
+# HAVING: Filtering After Grouping
+
+## Event types with at least 50,000 events
+
+`WHERE` filters rows before they are grouped, but `HAVING` filters after the counting is done. This query counts events by type and only keeps the types that have 50,000 events or more. I have to use `HAVING` here because the count does not exist until after `GROUP BY`.
+
+``` sql
+SELECT event_name, COUNT(*) AS events
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+WHERE _TABLE_SUFFIX BETWEEN '20201201' AND '20201231'
+GROUP BY event_name
+HAVING COUNT(*) >= 50000
+ORDER BY events DESC;
+```
+
+![](images/clipboard-2026729654.png)
+
+# Wildcard Tables and \_TABLE_SUFFIX
+
+## Events by day for one week
+
+GA4 saves one table for each day, and `events_*` reads all of them together. `_TABLE_SUFFIX` is the part of the table name that the `*` matched (the date), so filtering on it makes BigQuery scan only those days. This makes the query faster and cheaper. Here I look at the first week of December 2020 and count events per day.
+
+``` sql
+SELECT event_date, COUNT(*) AS events
+FROM `bigquery-public-data.ga4_obfuscated_sample_ecommerce.events_*`
+WHERE _TABLE_SUFFIX BETWEEN '20201201' AND '20201207'
+GROUP BY event_date
+ORDER BY event_date;
+```
+
+![](images/clipboard-2412278009.png)
+
+# Appendix: Links {.unnumbered}
+
+-   [View my GitHub Pages report](https://USERNAME.github.io/REPOSITORY/bigquery-sql-lecture1.html)
+-   [GitHub Repo for BigQuery Lecture 1](https://www.github.com/USERNAME/REPOSITORY)
